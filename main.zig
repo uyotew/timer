@@ -1,17 +1,21 @@
 const std = @import("std");
-const c = @cImport({
-    @cInclude("pulse/simple.h");
-});
+const pa = @import("pulseaudio.zig");
+
+fn parseNum(str: []const u8) !u64 {
+    return if (str.len == 0) 0 else std.fmt.parseUnsigned(u64, str, 10);
+}
 
 pub fn main() !void {
     const max_time_s = blk: {
         var arg_it = std.process.args();
         const prog_name = arg_it.next().?;
+        errdefer usage(prog_name);
         const time_str = arg_it.next() orelse return usage(prog_name);
         var time_str_it = std.mem.splitBackwardsScalar(u8, time_str, ':');
-        var time = std.fmt.parseUnsigned(u64, time_str_it.first(), 10) catch 0;
-        time += 60 * (std.fmt.parseUnsigned(u64, time_str_it.next() orelse break :blk time, 10) catch 0);
-        time += 3600 * (std.fmt.parseUnsigned(u64, time_str_it.next() orelse break :blk time, 10) catch 0);
+        var time = try parseNum(time_str_it.first());
+        time += 60 * (try parseNum(time_str_it.next() orelse break :blk time));
+        time += 3600 * (try parseNum(time_str_it.next() orelse break :blk time));
+        if (time_str_it.next() != null) return error.MaxTwoColons;
         break :blk time;
     };
 
@@ -72,23 +76,22 @@ fn usage(prog_name: []const u8) void {
 }
 
 fn startAlarm() !void {
-    const specs = c.pa_sample_spec{
-        .format = c.PA_SAMPLE_FLOAT32,
-        .channels = 2,
+    const specs: pa.SampleSpec = .{
+        .format = .float32le,
         .rate = 44100,
+        .channels = 2,
     };
-    const stream = c.pa_simple_new(
-        @as(usize, 0),
+    if (pa.simple_new(
+        null,
         "Timer",
-        c.PA_STREAM_PLAYBACK,
-        @as(usize, 0),
+        .playback,
+        null,
         "Music",
         &specs,
-        @as(usize, 0),
-        @as(usize, 0),
-        @as(usize, 0),
-    );
-    if (stream) |s| {
+        null,
+        null,
+        null,
+    )) |stream| {
         const buf = try std.heap.page_allocator.alloc(f32, 44100 * 2);
         var acc: f64 = 0;
         const freqs = [_]f64{ 440, 340, 440, 440, 603 };
@@ -99,8 +102,8 @@ fn startAlarm() !void {
             addFades(buf, 2000, 2000);
             for (buf) |*b| b.* *= 0.6;
             std.time.sleep(100 * std.time.ns_per_ms);
-            _ = c.pa_simple_write(s, buf.ptr, @sizeOf(f32) * buf.len, @as(usize, 0));
-            _ = c.pa_simple_drain(s, @as(usize, 0));
+            _ = pa.simple_write(stream, buf.ptr, @sizeOf(f32) * buf.len, null);
+            _ = pa.simple_drain(stream, null);
         }
     } else std.log.err("could not connect to pulse audio daemon", .{});
 }
