@@ -19,45 +19,54 @@ pub fn main() !void {
         break :blk time;
     };
 
-    const stdout = std.io.getStdOut();
-    const w = stdout.writer();
+    var write_buf: [256]u8 = undefined;
+    const stdout = std.fs.File.stdout();
+    var stdout_writer = stdout.writer(&write_buf);
+    const w = &stdout_writer.interface;
+
     var timer = try std.time.Timer.start();
     var current_time_ns: u64 = 0;
+
     if (stdout.isTty()) {
-        try printTime(max_time_s * std.time.ns_per_s);
+        try printTime(w, max_time_s * std.time.ns_per_s);
         try w.writeByte('\n');
         while (current_time_ns < std.time.ns_per_s * max_time_s) : (current_time_ns = timer.read()) {
             try w.writeAll("\x1b[J");
-            try printTime(current_time_ns);
+            try printTime(w, current_time_ns);
             try w.writeAll("\n\x1b[F");
-            std.time.sleep(std.time.ns_per_s);
+            try w.flush();
+            std.Thread.sleep(std.time.ns_per_s);
         }
         try w.writeAll("\x1b[J\x1b[5m");
-        try printTime(current_time_ns);
+        try printTime(w, current_time_ns);
         try w.writeAll("\n\x1b[0m");
+        try w.flush();
 
         _ = try std.Thread.spawn(.{}, startAlarm, .{});
         //make noise until cancelled
-        const r = std.io.getStdOut().reader();
+        var stdin_reader = std.fs.File.stdin().reader(&.{});
+        const r = &stdin_reader.interface;
         const old_termios = try initTerm();
-        _ = try r.readByte();
+        _ = try r.takeByte();
         try w.writeAll("\x1b[F\x1b[J");
+        try w.flush();
         try std.posix.tcsetattr(0, .FLUSH, old_termios);
     } else {
         while (current_time_ns < std.time.ns_per_s * max_time_s) : (current_time_ns = timer.read()) {
-            try printTime(current_time_ns);
+            try printTime(w, current_time_ns);
             try w.writeAll(" / ");
-            try printTime(max_time_s * std.time.ns_per_s);
+            try printTime(w, max_time_s * std.time.ns_per_s);
             try w.writeByte('\n');
-            std.time.sleep(std.time.ns_per_s);
+            try w.flush();
+            std.Thread.sleep(std.time.ns_per_s);
         }
-        try w.writeAll("YER DONE!!!\n");
+        try w.writeAll("IT'S SO OVER!!!\n");
+        try w.flush();
         try startAlarm();
     }
 }
 
-fn printTime(time_in_ns: u64) !void {
-    const w = std.io.getStdOut().writer();
+fn printTime(w: *std.Io.Writer, time_in_ns: u64) !void {
     var time_ns = time_in_ns;
     const h = time_ns / std.time.ns_per_hour;
     time_ns %= std.time.ns_per_hour;
@@ -101,7 +110,7 @@ fn startAlarm() !void {
             addNoise(buf, 0.04);
             addFades(buf, 2000, 2000);
             for (buf) |*b| b.* *= 0.6;
-            std.time.sleep(100 * std.time.ns_per_ms);
+            std.Thread.sleep(100 * std.time.ns_per_ms);
             _ = pa.simple_write(stream, buf.ptr, @sizeOf(f32) * buf.len, null);
             _ = pa.simple_drain(stream, null);
         }
