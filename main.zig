@@ -44,7 +44,7 @@ pub fn main() !void {
 
         _ = try std.Thread.spawn(.{}, startAlarm, .{});
         //make noise until cancelled
-        var stdin_reader = std.fs.File.stdin().reader(&.{});
+        var stdin_reader = std.fs.File.stdin().reader(&write_buf); // reusing write_buf is fine here
         const r = &stdin_reader.interface;
         const old_termios = try initTerm();
         _ = try r.takeByte();
